@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robot Dò Line - Full PID</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1c1e21; --muted: #6b7280;
+    --border: #e2e5ea; --accent: #2563eb; --ok: #16a34a; --warn: #d97706; --bad: #dc2626;
+    --on: #111827; --off: #e5e7eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #181b21; --text: #e8eaed; --muted: #9aa0a9;
+      --border: #2a2e36; --accent: #4c8dff; --ok: #34d399; --warn: #fbbf24; --bad: #f87171;
+      --on: #f9fafb; --off: #2a2e36;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 14px; display: grid; gap: 12px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  h1 { font-size: 18px; margin: 0; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 10px; }
+  .card h3 { font-size: 13px; margin: 16px 0 8px; color: var(--muted); }
+  button { font: inherit; border: 1px solid var(--border); background: var(--card); color: var(--text);
+           border-radius: 10px; padding: 10px 14px; cursor: pointer; touch-action: manipulation; }
+  button:active { transform: scale(.97); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .good { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .toggled { outline: 2px solid var(--warn); }
+  .badge { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+  .badge.on { color: var(--ok); border-color: var(--ok); }
+  .badge.warn { color: var(--warn); border-color: var(--warn); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row > button { flex: 1; min-width: 90px; }
+
+  .sensors { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+  .cell { text-align: center; }
+  .cell .dot { height: 34px; border-radius: 8px; background: var(--off); transition: background .08s; }
+  .cell.on .dot { background: var(--on); }
+  .cell span { font-size: 11px; color: var(--muted); }
+  .cell .raw { display: none; font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .showraw .cell .raw { display: block; }
+  .rawbar { display: none; height: 40px; background: var(--off); border-radius: 6px; margin-top: 4px; position: relative; overflow: hidden; }
+  .showraw .rawbar { display: block; }
+  .rawbar i { position: absolute; left: 0; right: 0; bottom: 0; background: var(--accent); height: 0; transition: height .1s; }
+  .track { position: relative; height: 10px; border-radius: 999px; background: var(--off); margin: 14px 4px 6px; }
+  .track::after { content: ""; position: absolute; left: 50%; top: -4px; bottom: -4px; width: 2px; background: var(--muted); opacity: .5; }
+  .marker { position: absolute; top: -5px; width: 20px; height: 20px; margin-left: -10px; border-radius: 50%;
+            background: var(--accent); left: 50%; transition: left .1s; }
+
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .stat { background: var(--bg); border-radius: 8px; padding: 8px 10px; }
+  .stat small { display: block; color: var(--muted); font-size: 11px; }
+  .stat b { font-size: 15px; font-variant-numeric: tabular-nums; word-break: break-word; }
+  .timer b { font-size: 20px; }
+
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 3px; }
+  input[type=number] { width: 100%; font: inherit; padding: 9px; border-radius: 8px;
+                       border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  input[type=range] { width: 100%; }
+
+  .dpad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; max-width: 280px; margin: 10px auto 0; }
+  .dpad button { padding: 16px 0; font-size: 18px; }
+  .dpad .stop { background: var(--bad); border-color: var(--bad); color: #fff; }
+
+  #log { height: 170px; overflow-y: auto; background: var(--bg); border-radius: 8px; padding: 8px;
+         font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <header>
+    <h1>Robot dò line · Full PID</h1>
+    <div class="row" style="flex:0 0 auto; flex-wrap:nowrap">
+      <span id="badge" class="badge">Chưa kết nối</span>
+      <button id="btnConnect" class="primary">Kết nối</button>
+    </div>
+  </header>
+
+  <div class="card">
+    <h2>Cảm biến</h2>
+    <div class="sensors" id="sensors"></div>
+    <div class="track"><div class="marker" id="marker"></div></div>
+    <div class="stats" style="margin-top:12px">
+      <div class="stat timer"><small>Thời gian</small><b id="stTime">0.00 s</b></div>
+      <div class="stat"><small>Chế độ</small><b id="stMode">-</b></div>
+      <div class="stat"><small>Trạng thái</small><b id="stCase">-</b></div>
+      <div class="stat"><small>Tốc độ hiện tại</small><b id="stV">-</b></div>
+      <div class="stat"><small>Vị trí (0-7000)</small><b id="stPos">-</b></div>
+      <div class="stat"><small>Sai số</small><b id="stErr">-</b></div>
+      <div class="stat"><small>Nét đứt đã qua</small><b id="stC1">-</b></div>
+      <div class="stat"><small>Vạch đích</small><b id="stC2">-</b></div>
+      <div class="stat"><small>Calib</small><b id="stCal">-</b></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Điều khiển chính</h2>
+    <div class="row">
+      <button data-cmd="CAL" class="ctl">CAL</button>
+      <button data-cmd="AUTO" class="good ctl">AUTO</button>
+      <button data-cmd="MANUAL" class="danger ctl">DỪNG</button>
+      <button id="btnTest" class="ctl">TEST cảm biến</button>
+    </div>
+    <div class="hint">CAL: quét cảm biến qua line và nền trong 5 giây (tự lưu vào EEPROM). TEST: hiện giá trị thô 8 mắt, bấm lại để tắt.</div>
+  </div>
+
+  <div class="card">
+    <h2>Thông số xe</h2>
+
+    <h3>PID</h3>
+    <div class="grid3">
+      <div><label>KP</label><input type="number" id="kp" step="any" value="0.04"></div>
+      <div><label>KD</label><input type="number" id="kd" step="any" value="0.4"></div>
+      <div><label>KI</label><input type="number" id="ki" step="any" value="0.00005"></div>
+    </div>
+    <div class="grid3" style="margin-top:8px">
+      <div><label>BASE (tốc độ tối đa)</label><input type="number" id="base" step="5" value="150"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="btnPid" class="primary ctl">Gửi PID</button>
+    </div>
+
+    <h3>Tốc độ theo đường (PROF)</h3>
+    <div class="grid3">
+      <div><label>SPEED_MIN (tối thiểu)</label><input type="number" id="vmin" step="5" value="110"></div>
+      <div><label>E_SLOW (sai số giảm hết)</label><input type="number" id="eslow" step="100" value="1800"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="btnProf" class="primary ctl">Gửi PROF</button>
+    </div>
+
+    <h3>Cua góc vuông (TURN)</h3>
+    <div class="grid3">
+      <div><label>TURN_OUT (bánh ngoài +)</label><input type="number" id="tout" step="5" value="60"></div>
+      <div><label>TURN_IN (bánh trong -)</label><input type="number" id="tin" step="5" value="60"></div>
+      <div><label>TURN_BASE</label><input type="number" id="tbase" step="5" value="120"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="btnTurn" class="primary ctl">Gửi TURN</button>
+      <button id="btnGetPid" class="ctl">Đọc tất cả từ xe</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Lái tay</h2>
+    <label>Tốc độ: <b id="spdVal">120</b></label>
+    <input type="range" id="spd" min="30" max="255" value="120">
+    <div class="dpad">
+      <span></span><button class="hold ctl" data-cmd="FWD">▲</button><span></span>
+      <button class="hold ctl" data-cmd="LFT">◀</button>
+      <button class="stop ctl" data-cmd="STP">■</button>
+      <button class="hold ctl" data-cmd="RGT">▶</button>
+      <span></span><button class="hold ctl" data-cmd="BWD">▼</button><span></span>
+    </div>
+    <div class="hint">Giữ nút để xe chạy, thả ra là dừng. Chỉ hoạt động khi xe không ở chế độ AUTO.</div>
+  </div>
+
+  <div class="card">
+    <h2>Nhật ký</h2>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+const SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";  // web ghi lệnh
+const TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";  // xe gửi trạng thái
+
+let device = null, rxChar = null, txChar = null;
+let sendChain = Promise.resolve();
+let holdTimer = null, rxBuf = "", testOn = false;
+let lastStatusAt = 0, goodStatus = 0, badStatus = 0, warnedMtu = false, watchdog = null;
+
+const $ = id => document.getElementById(id);
+const enc = new TextEncoder(), dec = new TextDecoder();
+
+// ---- Ô cảm biến ----
+const sensorsEl = $("sensors");
+for (let i = 0; i < 8; i++) {
+  const d = document.createElement("div");
+  d.className = "cell";
+  d.innerHTML = '<div class="dot"></div><span>L' + (i + 1) + '</span><div class="raw">-</div><div class="rawbar"><i></i></div>';
+  sensorsEl.appendChild(d);
+}
+function setPattern(p) {
+  [...sensorsEl.children].forEach((c, i) => c.classList.toggle("on", p[i] === "1"));
+}
+function setRaw(arr) {
+  [...sensorsEl.children].forEach((c, i) => {
+    c.querySelector(".raw").textContent = arr[i];
+    c.querySelector(".rawbar i").style.height = Math.min(100, arr[i] / 40.95) + "%";
+  });
+}
+
+// ---- Log ----
+function log(msg) {
+  const el = $("log");
+  el.textContent += "[" + new Date().toLocaleTimeString("vi-VN") + "] " + msg + "\n";
+  el.scrollTop = el.scrollHeight;
+}
+
+// ---- UI kết nối ----
+function setConnected(on) {
+  $("badge").textContent = on ? "Đã kết nối" : "Chưa kết nối";
+  $("badge").className = "badge" + (on ? " on" : "");
+  $("btnConnect").textContent = on ? "Ngắt" : "Kết nối";
+  document.querySelectorAll(".ctl").forEach(b => b.disabled = !on);
+}
+setConnected(false);
+
+function setTestUI(on) {
+  testOn = on;
+  $("btnTest").classList.toggle("toggled", on);
+  $("app").classList.toggle("showraw", on);
+}
+
+// ---- Gửi lệnh (xếp hàng; lệnh dài > 20 byte gửi kiểu có phản hồi) ----
+function send(cmd) {
+  if (!rxChar) return;
+  sendChain = sendChain.then(async () => {
+    try {
+      const data = enc.encode(cmd);
+      if (data.length > 20 && rxChar.writeValueWithResponse) await rxChar.writeValueWithResponse(data);
+      else if (rxChar.writeValueWithoutResponse)            await rxChar.writeValueWithoutResponse(data);
+      else                                                  await rxChar.writeValue(data);
+    } catch (e) { log("Lỗi gửi '" + cmd + "': " + e.message); }
+  });
+}
+
+// ---- Nhận dữ liệu ----
+const CASE_VN = {
+  PID_FOLLOW: "Bám line", STRAIGHT_FAST: "Thẳng nhanh", SLOW_CURVE: "Cua chậm",
+  TURN_LEFT: "Cua vuông trái", TURN_RIGHT: "Cua vuông phải", LOST_LINE: "Mất line",
+  GAP_STRAIGHT: "Đi thẳng (nét đứt)", FINISH: "Về đích", CALIBRATING: "Đang calib",
+  IDLE: "Nghỉ", "-": "-"
+};
+const MSG_PREFIX = /^(LOG:|PID:|RAW:)/;
+
+function onNotify(ev) {
+  const chunk = dec.decode(ev.target.value);
+  if (chunk.startsWith("{")) {
+    rxBuf = chunk;
+  } else if (rxBuf && !MSG_PREFIX.test(chunk) && rxBuf.length < 400) {
+    rxBuf += chunk;                       // JSON bị chia nhỏ: ghép tiếp
+  } else {
+    rxBuf = "";
+    handleLine(chunk);
+    return;
+  }
+  if (rxBuf.trim().endsWith("}")) {
+    const s = rxBuf; rxBuf = "";
+    try { handleStatus(JSON.parse(s)); goodStatus++; }
+    catch (e) { badStatus++; }
+  } else if (rxBuf.length >= 18 && !rxBuf.includes("}") && ev.target.value.byteLength <= 20) {
+    // Gói đến đúng 20 byte và chưa kết thúc: nhiều khả năng bị cắt do MTU nhỏ
+    badStatus++;
+  }
+  if (!goodStatus && badStatus >= 8 && !warnedMtu) {
+    warnedMtu = true;
+    log("⚠ Gói trạng thái bị cắt (MTU nhỏ). Thử: tắt/bật Bluetooth điện thoại, dùng Chrome mới nhất, hoặc kết nối lại.");
+    $("badge").className = "badge warn";
+  }
+}
+function fmtTime(ms) { return (ms / 1000).toFixed(2) + " s"; }
+function handleStatus(o) {
+  lastStatusAt = Date.now();
+  $("stMode").textContent = o.mode;
+  $("stCase").textContent = CASE_VN[o.case] || o.case;
+  $("stCal").textContent = ["Chưa", "Xong", "Đang calib"][o.cal] || "-";
+  $("stPos").textContent = o.pos;
+  $("stErr").textContent = o.err;
+  $("stV").textContent = o.v;
+  $("stC1").textContent = o.c1;
+  $("stC2").textContent = o.c2;
+  $("stTime").textContent = fmtTime(o.t);
+  $("marker").style.left = Math.min(100, Math.max(0, o.pos / 70)) + "%";
+  if (typeof o.pat === "string") setPattern(o.pat);
+}
+function handleLine(s) {
+  s = s.trim();
+  if (!s) return;
+  if (s.startsWith("PID:")) {
+    // PID:kp,kd,base,out,in,ki,vmin,eslow,tbase
+    const v = s.slice(4).split(",").map(Number);
+    if (v.length >= 9 && v.every(x => !isNaN(x))) {
+      $("kp").value = v[0]; $("kd").value = v[1]; $("base").value = v[2];
+      $("tout").value = v[3]; $("tin").value = v[4]; $("ki").value = v[5];
+      $("vmin").value = v[6]; $("eslow").value = v[7]; $("tbase").value = v[8];
+      log("Đã đọc thông số từ xe");
+    } else log("Gói PID không đủ: " + s);
+  } else if (s.startsWith("RAW:")) {
+    const v = s.slice(4).split(",").map(Number);
+    if (v.length === 8) setRaw(v);
+  } else if (s === "LOG:TEST_ON")  { setTestUI(true);  log("Xe: bật TEST"); }
+  else if (s === "LOG:TEST_OFF")   { setTestUI(false); log("Xe: tắt TEST"); }
+  else if (s === "LOG:CAL_START" || s === "LOG:AUTO_START") { setTestUI(false); log("Xe: " + s.slice(4)); }
+  else if (s.startsWith("LOG:FINISH")) log("🏁 " + s.slice(4));
+  else log("Xe: " + s);
+}
+
+// ---- Kết nối ----
+async function connect() {
+  if (!navigator.bluetooth) {
+    alert("Trình duyệt không hỗ trợ Web Bluetooth. Hãy dùng Chrome hoặc Edge (Android/Windows/macOS), không dùng iOS Safari.");
+    return;
+  }
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SERVICE] }, { name: "ROBOT_BLE" }],
+      optionalServices: [SERVICE]
+    });
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+    log("Đang kết nối " + (device.name || "thiết bị") + "...");
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(SERVICE);
+    rxChar = await svc.getCharacteristic(RX_UUID);
+    txChar = await svc.getCharacteristic(TX_UUID);
+    txChar.addEventListener("characteristicvaluechanged", onNotify);
+    await txChar.startNotifications();
+    goodStatus = badStatus = 0; warnedMtu = false; lastStatusAt = 0; rxBuf = "";
+    setConnected(true);
+    log("Đã kết nối");
+    setTimeout(() => send("GETPID"), 500);
+    clearInterval(watchdog);
+    watchdog = setInterval(() => {
+      if (rxChar && Date.now() - lastStatusAt > 4000 && !warnedMtu) {
+        warnedMtu = true;
+        log("⚠ 4 giây chưa nhận được số liệu từ xe. Nếu xe vẫn nhận lệnh bình thường, nguyên nhân thường là MTU BLE nhỏ làm gói trạng thái bị cắt.");
+      }
+    }, 2000);
+  } catch (e) {
+    log("Không kết nối được: " + e.message);
+    setConnected(false);
+  }
+}
+function onDisconnected() {
+  rxChar = txChar = null; rxBuf = "";
+  clearInterval(holdTimer); clearInterval(watchdog);
+  setTestUI(false);
+  setConnected(false);
+  log("Đã ngắt kết nối");
+}
+$("btnConnect").onclick = () => {
+  if (device && device.gatt.connected) device.gatt.disconnect();
+  else connect();
+};
+
+// ---- Nút lệnh đơn (giao diện TEST do xe báo về nên không tự đoán) ----
+document.querySelectorAll("button[data-cmd]:not(.hold)").forEach(b => {
+  b.addEventListener("click", () => send(b.dataset.cmd));
+});
+$("btnTest").onclick = () => send("TEST");
+
+// ---- PID / PROF / TURN ----
+$("btnPid").onclick = () => {
+  const kp = parseFloat($("kp").value), kd = parseFloat($("kd").value),
+        base = parseInt($("base").value), ki = parseFloat($("ki").value);
+  if ([kp, kd, base, ki].some(isNaN)) return log("PID: giá trị không hợp lệ");
+  send("PID:" + kp + "," + kd + "," + base + "," + ki.toFixed(6));
+};
+$("btnProf").onclick = () => {
+  const vm = parseInt($("vmin").value), es = parseInt($("eslow").value);
+  if ([vm, es].some(isNaN)) return log("PROF: giá trị không hợp lệ");
+  send("PROF:" + vm + "," + es);
+};
+$("btnTurn").onclick = () => {
+  const o = parseInt($("tout").value), i = parseInt($("tin").value), b = parseInt($("tbase").value);
+  if ([o, i, b].some(isNaN)) return log("TURN: giá trị không hợp lệ");
+  send("TURN:" + o + "," + i + "," + b);
+};
+$("btnGetPid").onclick = () => send("GETPID");
+
+// ---- Lái tay: giữ để chạy, thả để dừng ----
+function startHold(cmd) {
+  send(cmd);
+  clearInterval(holdTimer);
+  holdTimer = setInterval(() => send(cmd), 150);
+}
+function endHold() {
+  if (holdTimer) { clearInterval(holdTimer); holdTimer = null; send("STP"); }
+}
+document.querySelectorAll("button.hold").forEach(b => {
+  b.addEventListener("pointerdown", e => { e.preventDefault(); startHold(b.dataset.cmd); });
+  ["pointerup", "pointerleave", "pointercancel"].forEach(ev => b.addEventListener(ev, endHold));
+});
+
+// ---- Tốc độ tay ----
+let spdTimer = null;
+$("spd").oninput = e => {
+  $("spdVal").textContent = e.target.value;
+  clearTimeout(spdTimer);
+  spdTimer = setTimeout(() => send("SPD:" + e.target.value), 200);
+};
+
+window.addEventListener("beforeunload", () => { if (rxChar) send("MANUAL"); });
+</script>
+</body>
+</html>
